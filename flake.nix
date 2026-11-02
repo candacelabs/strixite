@@ -67,7 +67,8 @@
         version = "0.5.0";
         src = lib.fileset.toSource {
           root = ./.;
-          fileset = lib.fileset.gitTracked ./.;
+          # The engine's tracked sources minus this packaging: editing the flake must not rebuild the engine.
+          fileset = lib.fileset.difference (lib.fileset.gitTracked ./.) (lib.fileset.unions [ ./flake.nix ./flake.lock ]);
         };
         nativeBuildInputs = [ pkgs.cmake pkgs.ninja ];
         cmakeFlags = [
@@ -116,9 +117,33 @@
             "$@"
         '';
       };
+
+      # A systemd user unit running this build of serve (upstream's deploy/strix-server.service, minus its paths):
+      # `systemctl --user link` it, then `enable --now`. Pinned to this store path, so an upgrade is a re-link.
+      unit = pkgs.writeTextFile {
+        name = "strixite.service";
+        destination = "/share/systemd/user/strixite.service";
+        text = ''
+          [Unit]
+          Description=strixite: Qwen3.8-Flash-Next, OpenAI-compatible API on :5300
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=${serve}/bin/strixite-serve
+          TimeoutStopSec=90
+          Restart=on-failure
+          RestartSec=15
+          # exit 4: the startup memory check refused the settings; restarting would only refuse again.
+          RestartPreventExitStatus=4
+
+          [Install]
+          WantedBy=default.target
+        '';
+      };
     in
     {
-      packages.${system} = { inherit therock strixite serve; default = strixite; };
+      packages.${system} = { inherit therock strixite serve unit; default = strixite; };
       apps.${system} = {
         serve = { type = "app"; program = "${serve}/bin/strixite-serve"; };
         default = self.apps.${system}.serve;
